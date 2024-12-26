@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Last.fm Playlist Analyzer</title>
+    <style>
+        :root {
+            --primary: #b90000;
+            --secondary: #666;
+            --background: #121212;
+            --surface: #1e1e1e;
+            --text: #a21616;
+            --text-secondary: #aaaaaa;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: var(--background);
+            color: var(--text);
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: var(--surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .settings-section {
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #252525;
+            border-radius: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--secondary);
+        }
+
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 8px;
+            background: #333;
+            color: var(--text);
+            border: 1px solid #444;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #8b0000;
+        }
+
+        .upload-section {
+            border: 2px dashed var(--secondary);
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+
+        .stats-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        .stats-box {
+            background: var(--surface);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+
+        .track-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .track-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #333;
+        }
+
+        .track-item .scrobble-info {
+            display: flex;
+            gap: 20px;
+        }
+
+        .in-playlist {
+            color: var(--primary);
+            font-weight: bold;
+        }
+
+        #error-message {
+            color: var(--primary);
+            margin: 10px 0;
+            display: none;
+            padding: 10px;
+            background: #ffebeb;
+            border-radius: 4px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .status-message {
+            color: var(--secondary);
+            margin-top: 5px;
+            font-size: 14px;
+        }
+
+        /* Add these new styles */
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background-color: var(--primary);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .summary {
+            margin: 10px 0;
+            padding: 10px;
+            background: #121010;
+            border-radius: 4px;
+        }
+
+        .chart-container {
+            margin: 20px 0;
+            padding: 20px;
+            background: var(--surface);
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Last.fm Playlist Analyzer</h1>
+        
+        <div class="settings-section">
+            <h2>Settings</h2>
+            <div class="form-group">
+                <label for="api-key">Last.fm API Key:</label>
+                <input type="password" id="api-key" placeholder="Enter your Last.fm API key">
+            </div>
+            <div class="form-group">
+                <label for="username">Last.fm Username:</label>
+                <input type="text" id="username" placeholder="Enter your Last.fm username">
+            </div>
+            <button id="save-settings">Save Settings</button>
+            <div class="status-message" id="settings-status"></div>
+        </div>
+
+        <div class="upload-section" id="upload-area">
+            <p>Drop your CSV file here or click to upload</p>
+            <p>Format: artist,track</p>
+            <input type="file" id="file-input" accept=".csv" style="display: none">
+        </div>
+
+        <div id="error-message"></div>
+        <div id="loading" class="loading">Loading data from Last.fm...</div>
+
+        <div id="progress" style="display: none;">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div id="progress-text">Processing: 0/0</div>
+            <div id="summary" class="summary"></div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Scrobble Distribution</h2>
+            <canvas id="scrobbleChart"></canvas>
+        </div>
+
+        <div class="stats-container">
+            <div class="stats-box">
+                <h2>Track Statistics</h2>
+                <ul class="track-list" id="track-stats"></ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        // Local storage keys
+        const STORAGE_KEY = 'lastfm_settings_encrypted';
+        const CACHE_KEY = 'lastfm_cache';
+        
+        // API request constants
+        const BATCH_SIZE = 2; // Smaller batch size
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 2000; // 2 seconds
+        const RATE_LIMIT_DELAY = 3000; // 3 seconds between requests
+        const REQUEST_TIMEOUT = 10000; // 10 seconds timeout
+
+        let cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+
+        // Add timeout function
+        function timeout(ms) {
+            return new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms));
+        }
+
+        // Add retry logic helper
+        async function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Add encryption helpers
+        function encryptData(text, password) {
+            return btoa(text); // Basic encoding for example, consider using SubtleCrypto in production
+        }
+
+        function decryptData(encrypted, password) {
+            return atob(encrypted);
+        }
+
+        // DOM elements
+        const apiKeyInput = document.getElementById('api-key');
+        const usernameInput = document.getElementById('username');
+        const saveButton = document.getElementById('save-settings');
+        const settingsStatus = document.getElementById('settings-status');
+        const uploadArea = document.getElementById('upload-area');
+        const fileInput = document.getElementById('file-input');
+        const errorMessage = document.getElementById('error-message');
+        const trackStats = document.getElementById('track-stats');
+        const loadingIndicator = document.getElementById('loading');
+
+        // Load saved settings
+        function loadSettings() {
+            const settings = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+            apiKeyInput.value = settings.apiKey ? decryptData(settings.apiKey, 'your-secret') : '';
+            usernameInput.value = settings.username || '';
+            return {
+                apiKey: apiKeyInput.value,
+                username: usernameInput.value
+            };
+        }
+
+        // Save settings
+        function saveSettings() {
+            const settings = {
+                apiKey: encryptData(apiKeyInput.value.trim(), 'your-secret'),
+                username: usernameInput.value.trim()
+            };
+            
+            if (!settings.apiKey || !settings.username) {
+                showError('Please enter both API key and username.');
+                return false;
+            }
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+            settingsStatus.textContent = 'Settings saved!';
+            setTimeout(() => settingsStatus.textContent = '', 3000);
+            return true;
+        }
+
+        // Show error message
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            setTimeout(() => {
+                errorMessage.style.display = 'none';
+            }, 5000);
+        }
+
+        // Add cache management
+        function saveCache() {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+        }
+
+        function getCacheKey(artist, track) {
+            return `${artist}|${track}`.toLowerCase();
+        }
+
+        // Modified fetchTrackInfo with better error handling and timeout
+        async function fetchTrackInfo(artist, track, settings, retryCount = 0) {
+            const cacheKey = getCacheKey(artist, track);
+            if (cache[cacheKey]) {
+                return cache[cacheKey];
+            }
+
+            try {
+                await sleep(RATE_LIMIT_DELAY);
+
+                const cleanArtist = cleanupString(artist);
+                const cleanTrack = cleanupString(track);
+                
+                const url = `https://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=${settings.apiKey}&artist=${encodeURIComponent(cleanArtist)}&track=${encodeURIComponent(cleanTrack)}&username=${settings.username}&format=json`;
+                
+                // Add timeout to fetch
+                const response = await Promise.race([
+                    fetch(url),
+                    timeout(REQUEST_TIMEOUT)
+                ]);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                let result;
+                if (data.error) {
+                    console.log(`API error for ${artist} - ${track}:`, data.error);
+                    result = await searchTrack(cleanArtist, cleanTrack, settings);
+                } else {
+                    const count = parseInt(data.track?.userplaycount) || 0;
+                    console.log(`Scrobble count for ${artist} - ${track}:`, count);
+                    result = { userplaycount: count };
+                }
+
+                cache[cacheKey] = result;
+                saveCache();
+                return result;
+            } catch (error) {
+                console.error(`Error fetching info for ${artist} - ${track}:`, error);
+                if (retryCount < MAX_RETRIES) {
+                    console.log(`Retrying ${artist} - ${track} (attempt ${retryCount + 1})`);
+                    await sleep(RETRY_DELAY * (retryCount + 1));
+                    return fetchTrackInfo(artist, track, settings, retryCount + 1);
+                }
+                return { userplaycount: 0 };
+            }
+        }
+
+        // Modified processFile with accurate counting
+        async function processFile(file) {
+            const settings = loadSettings();
+            
+            if (!settings.apiKey || !settings.username) {
+                showError('Please save your Last.fm settings first.');
+                return;
+            }
+
+            if (!file.name.endsWith('.csv')) {
+                showError('Please upload a CSV file.');
+                return;
+            }
+
+            console.log('Processing file:', file.name); // Debug log
+            loadingIndicator.style.display = 'block';
+            trackStats.innerHTML = '';
+
+            const progressDiv = document.getElementById('progress');
+            const progressFill = document.getElementById('progress-fill');
+            const progressText = document.getElementById('progress-text');
+            const summaryDiv = document.getElementById('summary');
+
+            progressDiv.style.display = 'block';
+            loadingIndicator.style.display = 'block';
+            trackStats.innerHTML = '';
+
+            try {
+                const text = await file.text();
+                console.log('File content:', text); // Debug log
+                const playlist = parseCSV(text);
+                
+                if (playlist.length === 0) {
+                    throw new Error('No valid tracks found in CSV');
+                }
+
+                console.log('Parsed playlist:', playlist); // Debug log
+
+                const enrichedPlaylist = [];
+                let processed = 0;
+                let totalScrobbles = 0;
+                let errors = 0;
+                let failedTracks = [];
+
+                // Process in smaller batches
+                for (let i = 0; i < playlist.length; i += BATCH_SIZE) {
+                    const batch = playlist.slice(i, i + BATCH_SIZE);
+                    try {
+                        const promises = batch.map(track => 
+                            fetchTrackInfo(track.artist, track.track, settings)
+                                .then(info => {
+                                    processed++;
+                                    const scrobbles = info.userplaycount || 0;
+                                    totalScrobbles = enrichedPlaylist.reduce((sum, t) => sum + t.scrobbles, 0) + scrobbles;
+                                    
+                                    updateProgress(processed, playlist.length, totalScrobbles, errors);
+
+                                    return {
+                                        ...track,
+                                        scrobbles: scrobbles
+                                    };
+                                })
+                                .catch(err => {
+                                    console.error(`Failed to process ${track.artist} - ${track.track}:`, err);
+                                    errors++;
+                                    processed++;
+                                    failedTracks.push(`${track.artist} - ${track.track}`);
+                                    updateProgress(processed, playlist.length, totalScrobbles, errors);
+                                    return {
+                                        ...track,
+                                        scrobbles: 0
+                                    };
+                                })
+                        );
+
+                        const results = await Promise.all(promises);
+                        enrichedPlaylist.push(...results);
+                        
+                        // Update display periodically
+                        if (enrichedPlaylist.length % 5 === 0 || enrichedPlaylist.length === playlist.length) {
+                            displayStats(enrichedPlaylist);
+                        }
+
+                        // Log progress
+                        console.log(`Processed ${processed}/${playlist.length}, Scrobbles: ${totalScrobbles}, Errors: ${errors}`);
+                        
+                        if (failedTracks.length > 0) {
+                            console.log('Failed tracks:', failedTracks);
+                        }
+
+                        await sleep(500);
+                    } catch (batchError) {
+                        console.error('Batch error:', batchError);
+                        errors += batch.length;
+                        processed += batch.length;
+                        batch.forEach(track => failedTracks.push(`${track.artist} - ${track.track}`));
+                        updateProgress(processed, playlist.length, totalScrobbles, errors);
+                    }
+                }
+
+                // Final update
+                totalScrobbles = enrichedPlaylist.reduce((sum, track) => sum + track.scrobbles, 0);
+                updateProgress(processed, playlist.length, totalScrobbles, errors);
+                displayStats(enrichedPlaylist);
+
+                if (failedTracks.length > 0) {
+                    showError(`Failed to process ${failedTracks.length} tracks. Check console for details.`);
+                }
+            } catch (err) {
+                showError(`Error processing file: ${err.message}`);
+                console.error('Full error:', err);
+            } finally {
+                loadingIndicator.style.display = 'none';
+            }
+        }
+
+        function parseCSV(csv) {
+            try {
+                const lines = csv.split(/\r\n|\n/).filter(line => line.trim());
+                if (lines.length === 0) {
+                    throw new Error('Empty CSV file');
+                }
+
+                // Try to detect headers or use default column positions
+                let headers = lines[0].toLowerCase().split(',').map(h => h.trim());
+                let artistIndex = headers.findIndex(h => h.includes('artist') || h.includes('creator'));
+                let trackIndex = headers.findIndex(h => h.includes('track') || h.includes('title') || h.includes('song'));
+                let startIndex = 0;
+
+                // If no headers found, assume first two columns are artist and track
+                if (artistIndex === -1 || trackIndex === -1) {
+                    artistIndex = 0;
+                    trackIndex = 1;
+                    startIndex = 0; // Start from first line
+                } else {
+                    startIndex = 1; // Skip header line
+                }
+
+                return lines.slice(startIndex)
+                    .map(line => {
+                        const values = line.split(',').map(v => v.trim());
+                        
+                        // Try to extract artist and track from any non-empty values
+                        if (values.some(v => v)) {
+                            return {
+                                artist: (values[artistIndex] || values[0] || '').replace(/["']/g, ''),
+                                track: (values[trackIndex] || values[1] || '').replace(/["']/g, '')
+                            };
+                        }
+                        return null;
+                    })
+                    .filter(item => item && item.artist && item.track) // Only keep entries with both artist and track
+                    .map(item => ({
+                        artist: cleanupString(item.artist),
+                        track: cleanupString(item.track)
+                    }));
+            } catch (err) {
+                console.error('CSV parsing error:', err);
+                // Return empty array instead of throwing error
+                return [];
+            }
+        }
+
+        function cleanupString(str) {
+            return str
+                .toLowerCase()
+                .replace(/[\(\[\{].*?[\)\]\}]/g, '') // Remove content in brackets
+                .replace(/[^\w\s-]/g, '') // Remove special characters except hyphen
+                .replace(/\s+/g, ' ') // Normalize spaces
+                .trim();
+        }
+
+        let scrobbleChart = null;
+
+        // Add these color constants at the top with other constants
+        const CHART_COLORS = [
+            '#FF0000', // Red
+            '#00FF00', // Green
+            '#0000FF', // Blue
+            '#FFD700', // Gold
+            '#FF00FF', // Magenta
+            '#00FFFF', // Cyan
+            '#FFA500', // Orange
+            '#800080', // Purple
+            '#008000', // Dark Green
+            '#FF69B4', // Hot Pink
+        ];
+
+        // Update the updateChart function
+        function updateChart(playlist) {
+            const ctx = document.getElementById('scrobbleChart').getContext('2d');
+            
+            // Group tracks by scrobble count and keep track details
+            const scrobbleGroups = {};
+            playlist.forEach(track => {
+                const count = track.scrobbles;
+                if (!scrobbleGroups[count]) {
+                    scrobbleGroups[count] = {
+                        count: 1,
+                        tracks: [`${track.artist} - ${track.track}`]
+                    };
+                } else {
+                    scrobbleGroups[count].count++;
+                    scrobbleGroups[count].tracks.push(`${track.artist} - ${track.track}`);
+                }
+            });
+
+            // Prepare chart data
+            const data = {
+                labels: Object.keys(scrobbleGroups).map(count => {
+                    const group = scrobbleGroups[count];
+                    const trackCount = group.count;
+                    return `${count} scrobbles (${trackCount} ${trackCount === 1 ? 'track' : 'tracks'})`;
+                }),
+                datasets: [{
+                    data: Object.values(scrobbleGroups).map(group => group.count),
+                    backgroundColor: CHART_COLORS,
+                    borderColor: 'rgba(255, 255, 255, 0.2)',
+                    borderWidth: 1
+                }]
+            };
+
+            // Destroy existing chart if it exists
+            if (scrobbleChart) {
+                scrobbleChart.destroy();
+            }
+
+            // Create new chart with tooltip
+            scrobbleChart = new Chart(ctx, {
+                type: 'pie',
+                data: data,
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                color: '#ffffff',
+                                padding: 10,
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const scrobbleCount = context.label.split(' ')[0];
+                                    const tracks = scrobbleGroups[scrobbleCount].tracks;
+                                    return [
+                                        context.label,
+                                        '',
+                                        'Tracks:',
+                                        ...tracks.map(track => '• ' + track)
+                                    ];
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Update summary with detailed breakdown
+            const summaryDiv = document.getElementById('summary');
+            const existingSummary = summaryDiv.innerHTML;
+            const breakdownHtml = Object.entries(scrobbleGroups)
+                .sort(([countA], [countB]) => Number(countB) - Number(countA))
+                .map(([count, group]) => `
+                    <strong>${count} scrobbles:</strong>
+                    <ul style="margin: 5px 0 10px 20px; padding: 0;">
+                        ${group.tracks.map(track => `<li style="color: var(--text-secondary);">${track}</li>`).join('')}
+                    </ul>
+                `).join('');
+
+            summaryDiv.innerHTML = `
+                ${existingSummary}
+                <br>
+                <div style="margin-top: 10px; border-top: 1px solid #444; padding-top: 10px;">
+                    <strong>Detailed Breakdown:</strong><br>
+                    ${breakdownHtml}
+                </div>
+            `;
+        }
+
+        function displayStats(playlist) {
+            // Sort by scrobbles
+            const sortedTracks = [...playlist].sort((a, b) => b.scrobbles - a.scrobbles);
+            
+            trackStats.innerHTML = sortedTracks
+                .map(track => `
+                    <li class="track-item">
+                        <span>${track.artist} - ${track.track}</span>
+                        <div class="scrobble-info">
+                            <span class="scrobble-count">Scrobbles: ${track.scrobbles}</span>
+                            <span class="in-playlist">In Playlist ✓</span>
+                        </div>
+                    </li>
+                `).join('');
+
+            // Update chart
+            updateChart(playlist);
+        }
+
+        // Add progress update helper
+        function updateProgress(processed, total, scrobbles, errors) {
+            const progress = (processed / total) * 100;
+            const progressFill = document.getElementById('progress-fill');
+            const progressText = document.getElementById('progress-text');
+            const summaryDiv = document.getElementById('summary');
+
+            progressFill.style.width = `${progress}%`;
+            progressText.textContent = `Processing: ${processed}/${total}`;
+            
+            summaryDiv.innerHTML = `
+                Processed: ${processed}/${total}<br>
+                Total Scrobbles: ${scrobbles}<br>
+                Average Scrobbles: ${Math.round(scrobbles/(processed-errors) || 0)}<br>
+                Errors: ${errors}
+            `;
+        }
+
+        // Event Listeners
+        saveButton.addEventListener('click', saveSettings);
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) processFile(file);
+        });
+
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) processFile(file);
+        });
+
+        // Load settings on page load
+        loadSettings();
+    </script>
+</body>
+</html>
